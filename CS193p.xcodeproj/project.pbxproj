@@ -20,6 +20,7 @@
 		A14FB06F24A7205F0078380D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A14FB07224A7205F0078380D /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		A14FB07424A7205F0078380D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A17629E724A7BE6100815ADA /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -36,6 +37,7 @@
 		A14FB05F24A7205D0078380D = {
 			isa = PBXGroup;
 			children = (
+				A17629E724A7BE6100815ADA /* README.md */,
 				A14FB06A24A7205D0078380D /* CS193p */,
 				A14FB06924A7205D0078380D /* Products */,
 			);
