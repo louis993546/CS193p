@@ -1,5 +1,5 @@
 //
-//  ContentView.swift
+//  EmojiMemoryGameView.swift
 //  CS193p
 //
 //  Created by Louis Tsai on 6/27/20.
@@ -7,13 +7,14 @@
 
 import SwiftUI
 
-struct ContentView: View {
-    var viewModel: EmojiMemoryGame
+struct EmojiMemoryGameView: View {
+    @ObservedObject var viewModel: EmojiMemoryGame
     
     var body: some View {
         HStack {
             ForEach(viewModel.cards) { card in
                 CardView(card: card)
+                    .aspectRatio(2/3, contentMode: .fit)
                     .onTapGesture {
                         viewModel.choose(card: card)
                     }
@@ -29,31 +30,53 @@ struct CardView: View {
     var card: MemoryGame<String>.Card
     
     var body: some View {
-        ZStack {
-            if card.isFaceUp {
-                RoundedRectangle(cornerRadius: 10.0)
-                    .fill(Color.white)
-                RoundedRectangle(cornerRadius: 10.0)
-                    .stroke(lineWidth: 3)
-                Text(card.content)
-            } else {
-                RoundedRectangle(cornerRadius: 10.0).fill()
+        GeometryReader { geometry in
+            ZStack {
+                if card.isFaceUp {
+                    RoundedRectangle(cornerRadius: radius)
+                        .fill(Color.white)
+                    RoundedRectangle(cornerRadius: radius)
+                        .stroke(lineWidth: edgeLineWidth)
+                    Text(card.content)
+                } else {
+                    RoundedRectangle(cornerRadius: radius).fill()
+                }
             }
+            .font(Font.system(size: fontSize(geometry.size)))
         }
+    }
+    
+    // MARK: - Drawing Constants
+    let radius: CGFloat = 10.0
+    let edgeLineWidth: CGFloat = 3
+    
+    func fontSize(_ size: CGSize) -> CGFloat {
+        min(size.width, size.height) * 0.75
     }
 }
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView(viewModel: EmojiMemoryGame())
+        EmojiMemoryGameView(viewModel: EmojiMemoryGame())
     }
 }
 
 struct MemoryGame<CardContent> {
     var cards: Array<Card>
     
-    func choose(card: Card) {
-        print("card chosen: \(card)")
+    mutating func choose(card: Card) {
+        let chosenIndex = self.index(of: card)
+        self.cards[chosenIndex].isFaceUp.toggle()
+    }
+    
+    func index(of card: Card) -> Int {
+        for index in 0..<self.cards.count {
+            if self.cards[index].id == card.id {
+                return index
+            }
+        }
+        
+        return -1 // TODO: bogus!
     }
     
     init(numberOfPairsOfCards: Int, cardContentFactory: (Int) -> CardContent) {
@@ -75,8 +98,8 @@ struct MemoryGame<CardContent> {
     }
 }
 
-class EmojiMemoryGame {
-    private var model: MemoryGame<String> = createMemoryGame()
+class EmojiMemoryGame: ObservableObject {
+    @Published private var model: MemoryGame<String> = createMemoryGame()
     
     static func createMemoryGame() -> MemoryGame<String> {
         let emojis = ["👻", "🎃", "🕷"]
