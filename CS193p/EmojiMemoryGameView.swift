@@ -11,18 +11,88 @@ struct EmojiMemoryGameView: View {
     @ObservedObject var viewModel: EmojiMemoryGame
     
     var body: some View {
-        HStack {
-            ForEach(viewModel.cards) { card in
-                CardView(card: card)
-                    .aspectRatio(2/3, contentMode: .fit)
-                    .onTapGesture {
-                        viewModel.choose(card: card)
-                    }
-            }
+        Grid(items: viewModel.cards) { card in
+            CardView(card: card)
+                .onTapGesture {
+                    viewModel.choose(card: card)
+                }
+                .padding(5)
         }
         .padding()
         .foregroundColor(.orange)
         .font(.largeTitle)
+    }
+}
+
+struct GridLayout {
+    var size: CGSize
+    var rowCount: Int = 0
+    var columnCount: Int = 0
+    
+    init(itemCount: Int, nearAspectRatio desiredAspectRatio: Double = 1, in size: CGSize) {
+        self.size = size
+        // if our size is zero width or height or the itemCount is not > 0
+        // then we have no work to do (because our rowCount & columnCount will be zero)
+        guard size.width != 0, size.height != 0, itemCount > 0 else { return }
+        // find the bestLayout
+        // i.e., one which results in cells whose aspectRatio
+        // has the smallestVariance from desiredAspectRatio
+        // not necessarily most optimal code to do this, but easy to follow (hopefully)
+        var bestLayout: (rowCount: Int, columnCount: Int) = (1, itemCount)
+        var smallestVariance: Double?
+        let sizeAspectRatio = abs(Double(size.width/size.height))
+        for rows in 1...itemCount {
+            let columns = (itemCount / rows) + (itemCount % rows > 0 ? 1 : 0)
+            if (rows - 1) * columns < itemCount {
+                let itemAspectRatio = sizeAspectRatio * (Double(rows)/Double(columns))
+                let variance = abs(itemAspectRatio - desiredAspectRatio)
+                if smallestVariance == nil || variance < smallestVariance! {
+                    smallestVariance = variance
+                    bestLayout = (rowCount: rows, columnCount: columns)
+                }
+            }
+        }
+        rowCount = bestLayout.rowCount
+        columnCount = bestLayout.columnCount
+    }
+    
+    var itemSize: CGSize {
+        if rowCount == 0 || columnCount == 0 {
+            return CGSize.zero
+        } else {
+            return CGSize(
+                width: size.width / CGFloat(columnCount),
+                height: size.height / CGFloat(rowCount)
+            )
+        }
+    }
+    
+    func location(ofItemAt index: Int) -> CGPoint {
+        if rowCount == 0 || columnCount == 0 {
+            return CGPoint.zero
+        } else {
+            return CGPoint(
+                x: (CGFloat(index % columnCount) + 0.5) * itemSize.width,
+                y: (CGFloat(index / columnCount) + 0.5) * itemSize.height
+            )
+        }
+    }
+}
+
+struct Grid<Item, ItemView>: View where Item: Identifiable, ItemView: View {
+    var items: [Item]
+    var viewForItem: (Item) -> ItemView
+    
+    var body: some View {
+        GeometryReader { geometry in
+            let gridLayout = GridLayout(itemCount: items.count, in: geometry.size)
+            ForEach(items.indices) { index in
+                let item = items[index]
+                viewForItem(item)
+                    .frame(width: gridLayout.itemSize.width, height: gridLayout.itemSize.height)
+                    .position(gridLayout.location(ofItemAt: index))
+            }
+        }
     }
 }
 
@@ -39,7 +109,10 @@ struct CardView: View {
                         .stroke(lineWidth: edgeLineWidth)
                     Text(card.content)
                 } else {
-                    RoundedRectangle(cornerRadius: radius).fill()
+                    if !card.isMatched {
+                        RoundedRectangle(cornerRadius: radius)
+                            .fill()
+                    }
                 }
             }
             .font(Font.system(size: fontSize(geometry.size)))
@@ -61,22 +134,36 @@ struct ContentView_Previews: PreviewProvider {
     }
 }
 
-struct MemoryGame<CardContent> {
+extension Array {
+    var only: Element? {
+        count == 1 ? first : nil
+    }
+}
+
+struct MemoryGame<CardContent> where CardContent: Equatable {
     var cards: Array<Card>
     
-    mutating func choose(card: Card) {
-        let chosenIndex = self.index(of: card)
-        self.cards[chosenIndex].isFaceUp.toggle()
-    }
-    
-    func index(of card: Card) -> Int {
-        for index in 0..<self.cards.count {
-            if self.cards[index].id == card.id {
-                return index
+    var indexOfTheOneAndOnlyFaceUpCard: Int? {
+        get { cards.indices.filter { cards[$0].isFaceUp }.only }
+        set {
+            for index in cards.indices {
+                cards[index].isFaceUp = index == newValue
             }
         }
-        
-        return -1 // TODO: bogus!
+    }
+    
+    mutating func choose(card: Card) {
+        if let chosenIndex = cards.firstIndex(where: { c in c.id == card.id}), !cards[chosenIndex].isFaceUp, !cards[chosenIndex].isMatched {
+            if let potentialMatchIndex = indexOfTheOneAndOnlyFaceUpCard {
+                if cards[chosenIndex].content == cards[potentialMatchIndex].content {
+                    cards[chosenIndex].isMatched = true
+                    cards[potentialMatchIndex].isMatched = true
+                }
+                self.cards[chosenIndex].isFaceUp = true
+            } else {
+                indexOfTheOneAndOnlyFaceUpCard = chosenIndex
+            }
+        }
     }
     
     init(numberOfPairsOfCards: Int, cardContentFactory: (Int) -> CardContent) {
