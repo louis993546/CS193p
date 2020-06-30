@@ -25,9 +25,9 @@ struct EmojiMemoryGameView: View {
 }
 
 struct GridLayout {
-    var size: CGSize
-    var rowCount: Int = 0
-    var columnCount: Int = 0
+    private(set) var size: CGSize
+    private(set) var rowCount: Int = 0
+    private(set) var columnCount: Int = 0
     
     init(itemCount: Int, nearAspectRatio desiredAspectRatio: Double = 1, in size: CGSize) {
         self.size = size
@@ -96,35 +96,92 @@ struct Grid<Item, ItemView>: View where Item: Identifiable, ItemView: View {
     }
 }
 
+struct Pie: Shape {
+    var startAngle: Angle
+    var endAngle: Angle
+    var clockwise: Bool = false
+    
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let radius = min(rect.width, rect.height) / 2
+        let start = CGPoint(
+            x: center.x + radius * cos(CGFloat(startAngle.radians)),
+            y: center.y + radius * sin(CGFloat(startAngle.radians))
+        )
+        
+        p.move(to: center)
+        p.addLine(to: start)
+        p.addArc(center: center, radius: radius, startAngle: startAngle, endAngle: endAngle, clockwise: clockwise)
+        p.addLine(to: center)
+        
+        return p
+    }
+}
+
 struct CardView: View {
     var card: MemoryGame<String>.Card
     
     var body: some View {
         GeometryReader { geometry in
-            ZStack {
-                if card.isFaceUp {
-                    RoundedRectangle(cornerRadius: radius)
-                        .fill(Color.white)
-                    RoundedRectangle(cornerRadius: radius)
-                        .stroke(lineWidth: edgeLineWidth)
+            if card.isFaceUp || !card.isMatched {
+                ZStack {
+                    Pie(
+                        startAngle: Angle.degrees(0-90),
+                        endAngle: Angle.degrees(110-90),
+                        clockwise: true
+                    ).padding(5).opacity(opacity)
                     Text(card.content)
-                } else {
-                    if !card.isMatched {
-                        RoundedRectangle(cornerRadius: radius)
-                            .fill()
-                    }
+                        .font(Font.system(size: fontSize(geometry.size)))
                 }
+                .cardify(isFaceUp: card.isFaceUp)
             }
-            .font(Font.system(size: fontSize(geometry.size)))
+        }
+    }
+    
+    // MARK: - Drawing Constants
+    let opacity = 0.4
+    
+    func fontSize(_ size: CGSize) -> CGFloat {
+        min(size.width, size.height) * 0.7
+    }
+}
+
+struct Cardify: ViewModifier {
+    var isFaceUp: Bool
+    func body(content: Content) -> some View {
+        ZStack {
+            if isFaceUp {
+                RoundedRectangle(cornerRadius: radius)
+                    .fill(Color.white)
+                RoundedRectangle(cornerRadius: radius)
+                    .stroke(lineWidth: edgeLineWidth)
+                content
+            } else {
+                RoundedRectangle(cornerRadius: radius)
+            }
         }
     }
     
     // MARK: - Drawing Constants
     let radius: CGFloat = 10.0
     let edgeLineWidth: CGFloat = 3
-    
-    func fontSize(_ size: CGSize) -> CGFloat {
-        min(size.width, size.height) * 0.75
+}
+
+extension View {
+    func cardify(isFaceUp: Bool) -> some View {
+        return self.modifier(Cardify(isFaceUp: isFaceUp))
+    }
+}
+
+struct CardView_Preview: PreviewProvider {
+    static var previews: some View {
+        CardView(card: MemoryGame<String>.Card(id: 1, isFaceUp: true, isMatched: false, content: "👻"))
+            .padding()
+            .foregroundColor(.orange)
+            .font(.largeTitle)
+            .previewLayout(PreviewLayout.sizeThatFits)
     }
 }
 
@@ -141,9 +198,9 @@ extension Array {
 }
 
 struct MemoryGame<CardContent> where CardContent: Equatable {
-    var cards: Array<Card>
+    private(set) var cards: Array<Card>
     
-    var indexOfTheOneAndOnlyFaceUpCard: Int? {
+    private var indexOfTheOneAndOnlyFaceUpCard: Int? {
         get { cards.indices.filter { cards[$0].isFaceUp }.only }
         set {
             for index in cards.indices {
@@ -188,7 +245,7 @@ struct MemoryGame<CardContent> where CardContent: Equatable {
 class EmojiMemoryGame: ObservableObject {
     @Published private var model: MemoryGame<String> = createMemoryGame()
     
-    static func createMemoryGame() -> MemoryGame<String> {
+    private static func createMemoryGame() -> MemoryGame<String> {
         let emojis = ["👻", "🎃", "🕷"]
         return MemoryGame<String>(numberOfPairsOfCards: emojis.count) { index in
             return emojis[index]
