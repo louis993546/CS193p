@@ -11,16 +11,25 @@ struct EmojiMemoryGameView: View {
     @ObservedObject var viewModel: EmojiMemoryGame
     
     var body: some View {
-        Grid(items: viewModel.cards) { card in
-            CardView(card: card)
-                .onTapGesture {
-                    viewModel.choose(card: card)
+        VStack {
+            Grid(items: viewModel.cards) { card in
+                CardView(card: card)
+                    .onTapGesture {
+                        withAnimation(.linear(duration: 0.75)) {
+                            viewModel.choose(card: card)
+                        }
+                    }
+                    .padding(5)
+            }
+            .padding()
+            .foregroundColor(.orange)
+            .font(.largeTitle)
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.75)) {
+                    viewModel.resetGame()
                 }
-                .padding(5)
+            }) { Text("New game") }
         }
-        .padding()
-        .foregroundColor(.orange)
-        .font(.largeTitle)
     }
 }
 
@@ -85,11 +94,17 @@ struct Grid<Item, ItemView>: View where Item: Identifiable, ItemView: View {
     
     var body: some View {
         GeometryReader { geometry in
-            let gridLayout = GridLayout(itemCount: items.count, in: geometry.size)
+            let gridLayout = GridLayout(
+                itemCount: items.count,
+                in: geometry.size
+            )
             ForEach(items.indices) { index in
                 let item = items[index]
                 viewForItem(item)
-                    .frame(width: gridLayout.itemSize.width, height: gridLayout.itemSize.height)
+                    .frame(
+                        width: gridLayout.itemSize.width,
+                        height: gridLayout.itemSize.height
+                    )
                     .position(gridLayout.location(ofItemAt: index))
             }
         }
@@ -100,6 +115,16 @@ struct Pie: Shape {
     var startAngle: Angle
     var endAngle: Angle
     var clockwise: Bool = false
+    
+    var animatableData: AnimatablePair<Double, Double> {
+        get {
+            AnimatablePair(startAngle.radians, endAngle.radians)
+        }
+        set {
+            startAngle = Angle.radians(newValue.first)
+            endAngle = Angle.radians(newValue.second)
+        }
+    }
     
     func path(in rect: CGRect) -> Path {
         var p = Path()
@@ -113,7 +138,13 @@ struct Pie: Shape {
         
         p.move(to: center)
         p.addLine(to: start)
-        p.addArc(center: center, radius: radius, startAngle: startAngle, endAngle: endAngle, clockwise: clockwise)
+        p.addArc(
+            center: center,
+            radius: radius,
+            startAngle: startAngle,
+            endAngle: endAngle,
+            clockwise: clockwise
+        )
         p.addLine(to: center)
         
         return p
@@ -123,19 +154,51 @@ struct Pie: Shape {
 struct CardView: View {
     var card: MemoryGame<String>.Card
     
+    @State private var animatedBonusRemaining: Double = 0
+    
+    private func startBonusTimeAnimation() {
+        animatedBonusRemaining = card.bonusRemaining
+        withAnimation(.linear(duration: card.bonusTimeRemaining)) {
+            animatedBonusRemaining = 0
+        }
+    }
+    
     var body: some View {
         GeometryReader { geometry in
             if card.isFaceUp || !card.isMatched {
                 ZStack {
-                    Pie(
-                        startAngle: Angle.degrees(0-90),
-                        endAngle: Angle.degrees(110-90),
-                        clockwise: true
-                    ).padding(5).opacity(opacity)
+                    Group {
+                        if card.isConsumingBonusTime {
+                            Pie(
+                                startAngle: .degrees(0-90),
+                                endAngle: .degrees(-animatedBonusRemaining * 360 - 90),
+                                clockwise: true
+                            )
+                            .onAppear { startBonusTimeAnimation() }
+                        } else {
+                            Pie(
+                                startAngle: .degrees(0-90),
+                                endAngle: .degrees(-card.bonusRemaining * 360 - 90),
+                                clockwise: true
+                            )
+                        }
+                    }
+                    .padding(5)
+                    .opacity(opacity)
+                    
                     Text(card.content)
                         .font(Font.system(size: fontSize(geometry.size)))
+                        .rotationEffect(Angle.degrees(card.isMatched ? 360 : 0))
+                        .animation(
+                            card.isMatched ?
+                                Animation.linear(duration: 1)
+                                .repeatForever(autoreverses: false)
+                                : Animation.default
+                        )
                 }
                 .cardify(isFaceUp: card.isFaceUp)
+                .transition(.scale)
+                
             }
         }
     }
@@ -148,20 +211,35 @@ struct CardView: View {
     }
 }
 
-struct Cardify: ViewModifier {
-    var isFaceUp: Bool
+struct Cardify: AnimatableModifier {
+    var rotation: Double
+    var isFaceUp: Bool {
+        rotation < 90
+    }
+    var animatableData: Double {
+        get { return rotation }
+        set { rotation = newValue }
+    }
+    
+    init(isFaceUp: Bool) {
+        rotation = isFaceUp ? 0 : 180
+    }
+    
     func body(content: Content) -> some View {
         ZStack {
-            if isFaceUp {
-                RoundedRectangle(cornerRadius: radius)
-                    .fill(Color.white)
+            Group {
+                RoundedRectangle(cornerRadius: radius).fill(Color.white)
                 RoundedRectangle(cornerRadius: radius)
                     .stroke(lineWidth: edgeLineWidth)
                 content
-            } else {
-                RoundedRectangle(cornerRadius: radius)
             }
+            .opacity(isFaceUp ? 1 : 0)
+            
+            RoundedRectangle(cornerRadius: radius)
+                .fill()
+                .opacity(isFaceUp ? 0 : 1)
         }
+        .rotation3DEffect(.degrees(rotation), axis: (0,1,0))
     }
     
     // MARK: - Drawing Constants
@@ -177,11 +255,18 @@ extension View {
 
 struct CardView_Preview: PreviewProvider {
     static var previews: some View {
-        CardView(card: MemoryGame<String>.Card(id: 1, isFaceUp: true, isMatched: false, content: "👻"))
-            .padding()
-            .foregroundColor(.orange)
-            .font(.largeTitle)
-            .previewLayout(PreviewLayout.sizeThatFits)
+        CardView(
+            card: MemoryGame<String>.Card(
+                id: 1,
+                isFaceUp: true,
+                isMatched: false,
+                content: "👻"
+            )
+        )
+        .padding()
+        .foregroundColor(.orange)
+        .font(.largeTitle)
+        .previewLayout(PreviewLayout.sizeThatFits)
     }
 }
 
@@ -210,7 +295,10 @@ struct MemoryGame<CardContent> where CardContent: Equatable {
     }
     
     mutating func choose(card: Card) {
-        if let chosenIndex = cards.firstIndex(where: { c in c.id == card.id}), !cards[chosenIndex].isFaceUp, !cards[chosenIndex].isMatched {
+        if let chosenIndex = cards.firstIndex(
+            where: { c in c.id == card.id}),
+           !cards[chosenIndex].isFaceUp,
+           !cards[chosenIndex].isMatched {
             if let potentialMatchIndex = indexOfTheOneAndOnlyFaceUpCard {
                 if cards[chosenIndex].content == cards[potentialMatchIndex].content {
                     cards[chosenIndex].isMatched = true
@@ -232,13 +320,83 @@ struct MemoryGame<CardContent> where CardContent: Equatable {
         }
         cards.shuffle()
     }
-        
+    
     struct Card: Identifiable {
         var id: Int
         
-        var isFaceUp: Bool = false
-        var isMatched: Bool = false
+        var isFaceUp: Bool = false {
+            didSet {
+                if isFaceUp {
+                    startUsingBonusTime()
+                } else {
+                    stopUsingBonusTime()
+                }
+            }
+        }
+        var isMatched: Bool = false {
+            didSet {
+                stopUsingBonusTime()
+            }
+        }
         var content: CardContent
+        
+        // MARK: - Bonus time
+        
+        // this could give matching bonus points
+        // if the user matches the card
+        // before a certain amount of time passes during which the card is face up
+        
+        // can be zero which means "no bonus available" for this card
+        var bonusTimeLimit: TimeInterval = 6
+        
+        // how long this card has ever been face up
+        private var faceUpTime: TimeInterval {
+            if let lastFaceUpDate = self.lastFaceUpDate {
+                return pastFaceUpTime + Date().timeIntervalSince(lastFaceUpDate)
+            } else {
+                return pastFaceUpTime
+            }
+        }
+        
+        // the last time this card was turned face up (and is still face up)
+        var lastFaceUpDate: Date?
+        
+        // the accumulated time this card has been face up in the past
+        // (i.e. not including the current time it's been face up if it is currently so
+        var pastFaceUpTime: TimeInterval = 0
+        
+        // how much time left before the bonus opportunity runs out
+        var bonusTimeRemaining: TimeInterval {
+            max(0, bonusTimeLimit - faceUpTime)
+        }
+        
+        // percentage of the bonus time remaining
+        var bonusRemaining: Double {
+            (bonusTimeLimit > 0 && bonusTimeRemaining > 0) ? bonusTimeRemaining/bonusTimeLimit : 0
+        }
+        
+        // whether the card was matched during the bonus time
+        var hasEarnedBonus: Bool {
+            isMatched && bonusTimeRemaining > 0
+        }
+        
+        // whether we are currently face up, unmatched and have not yet used up the bonus window
+        var isConsumingBonusTime: Bool {
+            isFaceUp && !isMatched && bonusTimeRemaining > 0
+        }
+        
+        // called when the card transitions to face up state
+        private mutating func startUsingBonusTime() {
+            if isConsumingBonusTime, lastFaceUpDate == nil {
+                lastFaceUpDate = Date()
+            }
+        }
+        
+        // called when the card goes back face down (or gets matched)
+        private mutating func stopUsingBonusTime() {
+            pastFaceUpTime = faceUpTime
+            self.lastFaceUpDate = nil
+        }
     }
 }
 
@@ -262,5 +420,9 @@ class EmojiMemoryGame: ObservableObject {
     
     func choose(card: MemoryGame<String>.Card) {
         model.choose(card: card)
+    }
+    
+    func resetGame() {
+        model = EmojiMemoryGame.createMemoryGame()
     }
 }
