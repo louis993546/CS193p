@@ -25,40 +25,104 @@ struct EmojiArtDocumentView: View {
             .padding(.horizontal)
             GeometryReader { geometry in
                 ZStack {
-                    Color.white
-                        .overlay(
-                            Group {
-                                if document.backgroundImage != nil {
-                                    Image(uiImage: document.backgroundImage!)
-                                }
-                            }
-                        )
-                        .edgesIgnoringSafeArea(.bottom)
-                        .onDrop(of: ["public.image", "public.text"], isTargeted: nil) { providers, location in
-                            var location = geometry.convert(location, from: .global)
-                            location = CGPoint(
-                                x: location.x - geometry.size.width / 2,
-                                y: location.y - geometry.size.height / 2
-                            )
-                            return self.drop(providers, at: location)
-
-                        }
+                    Color.white.overlay(
+                        OptionalImage(uiImage: document.backgroundImage)
+                            .scaleEffect(self.zoomScale)
+                            .offset(self.panOffset)
+                    )
+                        .gesture(self.doubleTapToZoom(in: geometry.size))
                     ForEach(document.emojis) { emoji in
                         Text(emoji.text)
-                            .font(font(for: emoji))
-                            .position(position(for: emoji, in: geometry.size))
+                            .font(animatableWithSize: emoji.fontSize * self.zoomScale)
+                            .position(self.position(for: emoji, in: geometry.size))
                     }
+                }
+                .clipped()
+                .gesture(self.panGesture())
+                .gesture(self.zoomGesture())
+                .edgesIgnoringSafeArea([.horizontal, .bottom])
+                .onDrop(of: ["public.image", "public.text"], isTargeted: nil) { providers, location in
+                    // SwiftUI bug (as of 13.4)? the location is supposed to be in our coordinate system
+                    // however, the y coordinate appears to be in the global coordinate system
+                    var location = CGPoint(x: location.x, y: geometry.convert(location, from: .global).y)
+                    location = CGPoint(x: location.x - geometry.size.width/2, y: location.y - geometry.size.height/2)
+                    location = CGPoint(x: location.x - self.panOffset.width, y: location.y - self.panOffset.height)
+                    location = CGPoint(x: location.x / self.zoomScale, y: location.y / self.zoomScale)
+                    return self.drop(providers, at: location)
                 }
             }
         }
     }
     
-    private func font(for emoji: EmojiArt.Emoji) -> Font {
-        Font.system(size: emoji.fontSize)
+    @State private var steadyStateZoomScale: CGFloat = 1.0
+    @GestureState private var gestureZoomScale: CGFloat = 1.0
+    
+    private var zoomScale: CGFloat {
+        steadyStateZoomScale * gestureZoomScale
+    }
+    
+    private func zoomGesture() -> some Gesture {
+        MagnificationGesture()
+            .updating($gestureZoomScale) { latestGestureScale, gestureZoomScale, transaction in
+                gestureZoomScale = latestGestureScale
+            }
+            .onEnded { finalGestureScale in
+                self.steadyStateZoomScale *= finalGestureScale
+            }
+    }
+    
+    private func doubleTapToZoom(in size: CGSize) -> some Gesture {
+        TapGesture(count: 2)
+            .onEnded {
+                withAnimation {
+                    self.zoomToFit(self.document.backgroundImage, in: size)
+                }
+            }
+    }
+    
+    @State private var steadyStatePanOffset: CGSize = .zero
+    @GestureState private var gesturePanOffset: CGSize = .zero
+    
+    private var panOffset: CGSize {
+        (steadyStatePanOffset + gesturePanOffset) * zoomScale
+    }
+    
+    private func panGesture() -> some Gesture {
+        DragGesture()
+            .updating($gesturePanOffset) { latestDragGestureValue, gesturePanOffset, transaction in
+                gesturePanOffset = latestDragGestureValue.translation / self.zoomScale
+        }
+        .onEnded { finalDragGestureValue in
+            self.steadyStatePanOffset = self.steadyStatePanOffset + (finalDragGestureValue.translation / self.zoomScale)
+        }
+    }
+    
+    private func zoomToFit(_ image: UIImage?, in size: CGSize) {
+        if let image = image, image.size.width > 0, image.size.height > 0 {
+            let hZoom = size.width / image.size.width
+            let vZoom = size.height / image.size.height
+            self.steadyStateZoomScale = .zero
+            self.steadyStateZoomScale = min(hZoom, vZoom)
+        }
     }
     
     private func position(for emoji: EmojiArt.Emoji, in size: CGSize) -> CGPoint {
-        CGPoint(x: emoji.location.x + size.width / 2, y: emoji.location.y + size.height / 2)
+        var location = emoji.location
+        
+        location = CGPoint(
+            x: location.x * zoomScale,
+            y: location.y * zoomScale
+        )
+        location = CGPoint(
+            x: emoji.location.x + size.width / 2,
+            y: emoji.location.y + size.height / 2
+        )
+        location = CGPoint(
+            x: location.x + panOffset.width,
+            y: location.y + panOffset.height
+        )
+        
+        return location
     }
     
     private func drop(_ providers: [NSItemProvider], at location: CGPoint) -> Bool {
@@ -71,6 +135,18 @@ struct EmojiArtDocumentView: View {
             }
         }
         return found
+    }
+}
+
+struct OptionalImage: View {
+    var uiImage: UIImage?
+    
+    var body: some View {
+        Group {
+            if uiImage != nil {
+                Image(uiImage: uiImage!)
+            }
+        }
     }
 }
 
@@ -87,7 +163,23 @@ struct ContentView_Previews: PreviewProvider {
 class EmojiArtDocument: ObservableObject {
     static let palette: String = "🍎🍌🍊"
     
-    @Published private var emojiArt = EmojiArt()
+    // @Published // workaround for property observer problem with property wrappers
+    
+    private var emojiArt: EmojiArt = EmojiArt() {
+        willSet {
+            objectWillChange.send()
+        }
+        didSet {
+            UserDefaults.standard.set(emojiArt.json, forKey: EmojiArtDocument.untitled)
+        }
+    }
+    
+    private static let untitled = "EmojiArtDocument.Untitled"
+    
+    init() {
+        emojiArt = EmojiArt(json: UserDefaults.standard.data(forKey: EmojiArtDocument.untitled)) ?? EmojiArt()
+        fetchBackgroundImageData()
+    }
     
     @Published private(set) var backgroundImage: UIImage?
     
@@ -143,11 +235,11 @@ class EmojiArtDocument: ObservableObject {
     }
 }
 
-struct EmojiArt {
+struct EmojiArt: Codable {
     var backgroundURL: URL?
     var emojis = [Emoji]()
     
-    struct Emoji: Identifiable {
+    struct Emoji: Identifiable, Codable, Hashable {
         let text: String
         var x: Int
         var y: Int
@@ -164,6 +256,20 @@ struct EmojiArt {
         }
     }
     
+    var json: Data? {
+        return try? JSONEncoder().encode(self)
+    }
+    
+    init?(json: Data?) {
+        if json != nil, let newEmojiArt = try? JSONDecoder().decode(EmojiArt.self, from: json!) {
+            self = newEmojiArt
+        } else {
+            return nil
+        }
+    }
+    
+    init() { }
+    
     private var uniqueEmojiId = 0
     
     mutating func addEmoji (_ text: String, x: Int, y: Int, size: Int) {
@@ -171,6 +277,50 @@ struct EmojiArt {
         emojis.append(Emoji(text: text, x: x, y: y, size: size, id: uniqueEmojiId))
     }
 }
+
+extension EmojiArt.Emoji {
+    var fontSize: CGFloat { CGFloat(self.size) }
+    var location: CGPoint { CGPoint(x: CGFloat(x), y: CGFloat(y)) }
+}
+
+struct AnimatableSystemFontModifier: AnimatableModifier {
+    var size: CGFloat
+    var weight: Font.Weight = .regular
+    var design: Font.Design = .default
+    
+    func body(content: Content) -> some View {
+        content.font(Font.system(size: size, weight: weight, design: design))
+    }
+    
+    var animatableData: CGFloat {
+        get { size }
+        set { size = newValue }
+    }
+}
+
+extension View {
+    func font(
+        animatableWithSize size: CGFloat,
+        weight: Font.Weight = .regular,
+        design: Font.Design = .default
+    ) -> some View {
+        self.modifier(AnimatableSystemFontModifier(
+                        size: size,
+                        weight: weight,
+                        design: design
+        ))
+    }
+}
+
+//
+//  EmojiArtExtensions.swift
+//  EmojiArt
+//
+//  Created by CS193p Instructor on 4/27/20.
+//  Copyright © 2020 Stanford University. All rights reserved.
+//
+
+import SwiftUI
 
 extension Collection where Element: Identifiable {
     func firstIndex(matching element: Element) -> Self.Index? {
@@ -372,9 +522,4 @@ extension UIImage {
         }
         return url
     }
-}
-
-extension EmojiArt.Emoji {
-    var fontSize: CGFloat { CGFloat(self.size) }
-    var location: CGPoint { CGPoint(x: CGFloat(x), y: CGFloat(y)) }
 }
